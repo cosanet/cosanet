@@ -33,6 +33,6 @@ WORKDIR /app
 
 COPY --from=builder /app/cosanet .
 
-EXPOSE 9100
+EXPOSE 9156
 
 CMD ["/app/cosanet"]
