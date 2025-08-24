@@ -1,4 +1,7 @@
-# Cosanet Exporter
+# Cosanet Exporter - Container Sandbox Network Exporter
+
+<p align="center"><a href="https://github.com/cosanet/cosanet" rel="cosanet"><img src="logo/cosanet_logo_256.png" alt="Cosanet Logo" width="256"></a></p>
+
 
 Cosanet is a Prometheus exporter for collecting advanced network statistics from Linux hosts and Kubernetes pods. It is designed to operate in containerized environments and supports multi-namespace network statistics collection, including conntrack and /proc/net metrics.
 
