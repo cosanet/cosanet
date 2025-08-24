@@ -9,6 +9,20 @@ Cosanet is a Prometheus exporter for collecting advanced network statistics from
 - Supports conntrack table stats, `/proc/net/snmp`, `/proc/net/snmp6`, `/proc/net/netstat`
 - Designed for use in Kubernetes clusters as DaemonSet
 
+### Security considerations
+
+Note that due to the way it works, it has security considerations:
+
+- must be run with
+  - `securityContext.privileged: true`
+  - `hostNetwork: true`
+  - `hostPID: true`
+- must be run as `root`
+- have the node's CRI socket mounted eg: `/run/containerd/containerd.sock`
+- have access to node's `proc` filesystem
+
+As it runs on the node network namespace, the port must be free (9156 by default)
+
 ## Architecture
 
 Cosanet uses the [prometheus/client_golang](https://github.com/prometheus/client_golang) library to expose metrics. It leverages [vishvananda/netns](https://github.com/vishvananda/netns) to switch network namespaces and [ti-mo/conntrack](https://github.com/ti-mo/conntrack) for conntrack stats. The collector runs on the main OS thread to safely switch namespaces.

@@ -90,9 +90,13 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(`<html>
-<head><title>Cosanet Exporter</title></head>
+<head><title>Cosanet Exporter ` + Version + `</title></head>
 <body>
-	<h1>Cosanet Exporter</h1>
+	<h1>Cosanet Exporter ` + Version + `</h1>
+	<p>Version: ` + Version + ` (` + CommitHash + `)</p>
+	<p>Builder: ` + Builder + `</p>
+	<p>Built on: ` + BuildTimestamp + `</p>
+	<p>Project URL: ` + ProjectURL + `</p>
 	<p><a href="/metrics">Metrics</a></p>
 </body>
 </html>` + "\n"))
