@@ -35,7 +35,7 @@ func main() {
 
 	opts := &CliOpts{}
 	flag.StringVar(&opts.LogFormat, "logformat", "json", "Log output format: json or text")
-	flag.StringVar(&opts.ListenAddr, "listen", ":9100", "Address and port to listen on (e.g. :9100 or 0.0.0.0:9100)")
+	flag.StringVar(&opts.ListenAddr, "listen", ":9156", "Address and port to listen on (e.g. :8080 or 0.0.0.0:9988)")
 	flag.DurationVar(&opts.CacheDuration, "cache-duration", 500*time.Millisecond, "Cache duration for metrics collection (e.g. 500ms, 2s, 1m)")
 	flag.StringVar(&opts.Verbosity, "verbosity", "info", "Log verbosity: debug, info, warn, error")
 	flag.Parse()

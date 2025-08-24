@@ -20,8 +20,9 @@ Cosanet uses the [prometheus/client_golang](https://github.com/prometheus/client
 > - To limit resource consumption on the main thread, as it can't be multi threaded, a metric cache has been implemented
 > - Collecting some metrics like connection stats per proto can be relatively consuming, multiplied by the number of sandboxes, it can be quite expensive, act accordingly
 
-
 ## Metrics Exposed
+
+Following metrics will be exposed by default on `:9156/metrics`:
 
 - `cosanet_conntrack_curr`: Current entries in conntrack table
 - `cosanet_conntrack_max`: Maximum entries in conntrack table
