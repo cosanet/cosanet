@@ -69,17 +69,20 @@ func main() {
 		slog.String("project_url", ProjectURL),
 	)
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		slog.Error("Failed to get hostname", slog.Any("err", err))
-	} else {
-		slog.Info("Hostname", slog.String("hostname", hostname))
+	nodename := os.Getenv("NODE_NAME")
+	if nodename == "" {
+		var err error
+		nodename, err = os.Hostname()
+		if err != nil {
+			slog.Error("Failed to get hostname", slog.Any("err", err))
+		}
 	}
+	slog.Info("Nodename", slog.String("hostname", nodename))
 
 	// Part of the kludge to perform the collection on main thread (see bellow)
 	collectRequestChan := make(chan collector.CollectRequest)
 	collector := collector.NewCosanetCollector(
-		hostname,
+		nodename,
 		collectRequestChan,
 		collector.CosanetCollectorOptions{},
 	)
@@ -103,7 +106,7 @@ func main() {
 	})
 	slog.Info("Exporter running", slog.String("address", opts.ListenAddr+"/metrics"))
 	go func() {
-		err = http.ListenAndServe(opts.ListenAddr, nil)
+		err := http.ListenAndServe(opts.ListenAddr, nil)
 		if err != nil {
 			slog.Error("Exporter failed", slog.Any("err", err))
 			os.Exit(1)
