@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,9 +32,12 @@ type PodInfo struct {
 }
 
 type CosanetCollector struct {
-	nodename   string
-	chanToFeed chan CollectRequest
-	options    CosanetCollectorOptions
+	nodename            string
+	chanToFeed          chan CollectRequest
+	options             CosanetCollectorOptions
+	podFilter           regexp.Regexp
+	snmpMetricFilter    regexp.Regexp
+	netstatMetricFilter regexp.Regexp
 }
 
 // Describe implements prometheus.Collector.
@@ -40,13 +45,35 @@ func (c *CosanetCollector) Describe(chan<- *prometheus.Desc) {
 }
 
 type CosanetCollectorOptions struct {
+	PodFilter   string
+	CollectHost struct {
+		Enabled bool
+	}
+	Conntrack struct {
+		Enabled bool
+	}
+	Snmp struct {
+		Enabled       bool
+		MetricInclude string
+	}
+	Netstat struct {
+		Enabled       bool
+		MetricInclude string
+	}
+	SockProto struct {
+		Enabled bool
+		Protos  string
+	}
 }
 
 func NewCosanetCollector(nodename string, ch chan CollectRequest, options CosanetCollectorOptions) *CosanetCollector {
 	return &CosanetCollector{
-		nodename:   nodename,
-		chanToFeed: ch,
-		options:    options,
+		nodename:            nodename,
+		chanToFeed:          ch,
+		options:             options,
+		podFilter:           *regexp.MustCompile(options.PodFilter),
+		snmpMetricFilter:    *regexp.MustCompile(options.Snmp.MetricInclude),
+		netstatMetricFilter: *regexp.MustCompile(options.Netstat.MetricInclude),
 	}
 }
 
@@ -82,6 +109,17 @@ func (c *CosanetCollector) CollectFromMainThread(ch chan<- prometheus.Metric) {
 		os.Exit(1)
 	}
 	for _, info := range infos {
+		composedPodName := fmt.Appendf(nil, "%s/%s", info.Namespace, info.Name)
+		if !c.podFilter.Match(composedPodName) {
+			slog.Debug(
+				"sandbox skipped due to PodFilter",
+				slog.String("name", info.Name),
+				slog.String("namespace", info.Namespace),
+				slog.String("composedpodname", string(composedPodName)),
+				slog.String("filter", c.podFilter.String()),
+			)
+			continue
+		}
 		nsHandle, err := netns.GetFromPid(info.PID)
 		if err != nil {
 			slog.Error(
@@ -112,20 +150,21 @@ func (c *CosanetCollector) CollectFromMainThread(ch chan<- prometheus.Metric) {
 		}
 		nsHandle.Close()
 	}
-
-	c.collectStatsInNETNS(
-		PodInfo{
-			Namespace: "HOST",
-			netNSPath: "HOST",
-			netNSName: "HOST",
-		},
-		ch,
-	)
+	if c.options.CollectHost.Enabled {
+		c.collectStatsInNETNS(
+			PodInfo{
+				Namespace: "HOST",
+				netNSPath: "HOST",
+				netNSName: "HOST",
+			},
+			ch,
+		)
+	}
 }
 
 func (c *CosanetCollector) collectStatsInNETNS(info PodInfo, ch chan<- prometheus.Metric) {
 
-	if true {
+	if c.options.Conntrack.Enabled {
 		dynamic_label_def := []string{
 			"cosanet_node",
 			"cosanet_pod",
@@ -172,28 +211,40 @@ func (c *CosanetCollector) collectStatsInNETNS(info PodInfo, ch chan<- prometheu
 		)
 	}
 
-	// Socket stats
-
-	if false {
-		for _, socktype := range []string{"tcp", "udp", "icmp", "udplite", "raw"} {
-			c.collectAndEmitSockStats(info, socktype, ch)
+	// Socket stats per proto
+	if c.options.SockProto.Enabled {
+		sockprotoToCollect := strings.Split(c.options.SockProto.Protos, ",")
+		for _, sockproto := range []string{"tcp", "udp", "icmp", "udplite", "raw"} {
+			if !slices.Contains(sockprotoToCollect, sockproto) {
+				slog.Debug(
+					"socket proto skipped, not in collect list",
+					slog.String("name", info.Name),
+					slog.String("namespace", info.Namespace),
+					slog.String("sockproto", sockproto),
+					slog.Any("collectlist", sockprotoToCollect),
+				)
+				continue
+			}
+			c.collectAndEmitSockStats(info, sockproto, ch)
 		}
 	}
 
-	snmp_stats, _ := procnet_2l_parser.Parse2LFile("/proc/net/snmp")
-	c.publishProcNet("snmp", snmp_stats, info, ch)
-	_ = snmp_stats
+	if c.options.Snmp.Enabled {
+		snmp_stats, _ := procnet_2l_parser.Parse2LFile("/proc/net/snmp")
+		c.publishProcNet("snmp", snmp_stats, info, ch, c.snmpMetricFilter)
 
-	snmp6_stats, _ := procnet_v6_parser.ParseV6File("/proc/net/snmp6")
-	c.publishProcNet("snmp6", snmp6_stats, info, ch)
+		snmp6_stats, _ := procnet_v6_parser.ParseV6File("/proc/net/snmp6")
+		c.publishProcNet("snmp6", snmp6_stats, info, ch, c.snmpMetricFilter)
+	}
 
-	netstat_stats, _ := procnet_2l_parser.Parse2LFile("/proc/net/netstat")
-	c.publishProcNet("netstat", netstat_stats, info, ch)
-	_ = netstat_stats
+	if c.options.Netstat.Enabled {
+		netstat_stats, _ := procnet_2l_parser.Parse2LFile("/proc/net/netstat")
+		c.publishProcNet("netstat", netstat_stats, info, ch, c.netstatMetricFilter)
+	}
 
 }
 
-func (c *CosanetCollector) publishProcNet(s string, stats map[string]map[string]int, info PodInfo, ch chan<- prometheus.Metric) {
+func (c *CosanetCollector) publishProcNet(source string, stats map[string]map[string]int, info PodInfo, ch chan<- prometheus.Metric, filter regexp.Regexp) {
 	labels := []string{
 		"cosanet_node",
 		"cosanet_pod",
@@ -202,10 +253,22 @@ func (c *CosanetCollector) publishProcNet(s string, stats map[string]map[string]
 	}
 	for proto, metrics := range stats {
 		for metric, value := range metrics {
+			motif := fmt.Appendf(nil, "%s_%s", proto, metric)
+			if !filter.Match(motif) {
+				slog.Debug(
+					"metric skipped due to filter",
+					slog.String("name", info.Name),
+					slog.String("namespace", info.Namespace),
+					slog.String("proto_metric", string(motif)),
+					slog.String("source", source),
+					slog.Any("filter", filter.String()),
+				)
+				continue
+			}
 			ch <- prometheus.MustNewConstMetric(
 				prometheus.NewDesc(
-					fmt.Sprintf("cosanet_proc_net_%s_%s_%s", s, proto, metric),
-					fmt.Sprintf("/proc/net/%s %s %s entry", s, proto, metric),
+					fmt.Sprintf("cosanet_proc_net_%s_%s_%s", source, proto, metric),
+					fmt.Sprintf("/proc/net/%s %s %s entry", source, proto, metric),
 					labels,
 					nil,
 				),
