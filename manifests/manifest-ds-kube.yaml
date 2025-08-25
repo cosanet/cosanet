@@ -4,16 +4,21 @@ metadata:
   name: cosanet
   labels:
     app: cosanet
+  annotations:
+    prometheus.io/scrape: 'true'
+    prometheus.io/port: '9156'
 spec:
   selector:
     matchLabels:
       app: cosanet
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '9156'
       labels:
         app: cosanet
     spec:
-      hostNetwork: true
       hostPID: true
       containers:
       - name: cosanet
@@ -21,20 +26,30 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 9156
+          name: metrics
           protocol: TCP
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         securityContext:
           privileged: true
         volumeMounts:
         - name: containerd-sock
           mountPath: /run/containerd/containerd.sock
-          readOnly: false
+          readOnly: true
         - name: host-netns
           mountPath: /var/run/netns
-          readOnly: false
-          mountPropagation: Bidirectional
+          readOnly: true
+          mountPropagation: HostToContainer
         - name: host-proc
           mountPath: /host/proc
           readOnly: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 50Mi
       volumes:
       - name: containerd-sock
         hostPath:
@@ -54,7 +69,3 @@ spec:
       - operator: Exists
         effect: NoExecute
       - operator: Exists
-      resources:
-        requests:
-          cpu: 10m
-          memory: 50Mi

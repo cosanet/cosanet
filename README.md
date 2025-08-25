@@ -18,13 +18,10 @@ Note that due to the way it works, it has security considerations:
 
 - must be run with
   - `securityContext.privileged: true`
-  - `hostNetwork: true`
   - `hostPID: true`
 - must be run as `root`
 - have the node's CRI socket mounted eg: `/run/containerd/containerd.sock`
 - have access to node's `proc` filesystem
-
-As it runs on the node network namespace, the port must be free (9156 by default)
 
 ## Architecture
 

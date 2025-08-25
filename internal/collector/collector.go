@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/cosanet/cosanet/internal/netstat"
@@ -25,6 +26,7 @@ type PodInfo struct {
 	Name      string
 	Namespace string
 	netNSPath string
+	netNSName string
 }
 
 type CosanetCollector struct {
@@ -112,7 +114,11 @@ func (c *CosanetCollector) CollectFromMainThread(ch chan<- prometheus.Metric) {
 	}
 
 	c.collectStatsInNETNS(
-		PodInfo{Namespace: "HOST", netNSPath: "HOST"},
+		PodInfo{
+			Namespace: "HOST",
+			netNSPath: "HOST",
+			netNSName: "HOST",
+		},
 		ch,
 	)
 }
@@ -124,6 +130,7 @@ func (c *CosanetCollector) collectStatsInNETNS(info PodInfo, ch chan<- prometheu
 			"cosanet_node",
 			"cosanet_pod",
 			"cosanet_namespace",
+			"cosanet_netnsname",
 		}
 
 		cntck, err := conntrack.Dial(nil)
@@ -147,6 +154,7 @@ func (c *CosanetCollector) collectStatsInNETNS(info PodInfo, ch chan<- prometheu
 			c.nodename,
 			info.Name,
 			info.Namespace,
+			info.netNSName,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
@@ -160,6 +168,7 @@ func (c *CosanetCollector) collectStatsInNETNS(info PodInfo, ch chan<- prometheu
 			c.nodename,
 			info.Name,
 			info.Namespace,
+			info.netNSName,
 		)
 	}
 
@@ -185,7 +194,12 @@ func (c *CosanetCollector) collectStatsInNETNS(info PodInfo, ch chan<- prometheu
 }
 
 func (c *CosanetCollector) publishProcNet(s string, stats map[string]map[string]int, info PodInfo, ch chan<- prometheus.Metric) {
-	labels := []string{"cosanet_node", "cosanet_pod", "cosanet_namespace"}
+	labels := []string{
+		"cosanet_node",
+		"cosanet_pod",
+		"cosanet_namespace",
+		"cosanet_netnsname",
+	}
 	for proto, metrics := range stats {
 		for metric, value := range metrics {
 			ch <- prometheus.MustNewConstMetric(
@@ -200,6 +214,7 @@ func (c *CosanetCollector) publishProcNet(s string, stats map[string]map[string]
 				c.nodename,
 				info.Name,
 				info.Namespace,
+				info.netNSName,
 			)
 		}
 	}
@@ -210,7 +225,7 @@ type statscollcouple struct {
 	v6 func() (netstat.SocketStats, error)
 }
 
-func (c *CosanetCollector) collectAndEmitSockStats(info PodInfo, socktype string, ch chan<- prometheus.Metric) error {
+func (c *CosanetCollector) collectAndEmitSockStats(info PodInfo, socktype string, ch chan<- prometheus.Metric) (netstat.SocketStats, netstat.SocketStats, error) {
 	var callbacks statscollcouple
 	switch socktype {
 	case "tcp":
@@ -243,22 +258,29 @@ func (c *CosanetCollector) collectAndEmitSockStats(info PodInfo, socktype string
 		}
 
 	default:
-		return fmt.Errorf("unrecognized socket type: %s", socktype)
+		return nil, nil, fmt.Errorf("unrecognized socket type: %s", socktype)
 	}
 
 	statsv4, err := callbacks.v4()
 	if err != nil {
 		slog.Error("failed to collect IPv4 stats", slog.String("socktype", socktype), slog.Any("err", err))
-		return err
+		return nil, nil, err
 	}
 
 	statsv6, err := callbacks.v6()
 	if err != nil {
 		slog.Error("failed to collect IPv6 stats", slog.String("socktype", socktype), slog.Any("err", err))
-		return err
+		return nil, nil, err
 	}
 
-	labels := []string{"cosanet_node", "cosanet_pod", "cosanet_namespace", "cosanet_state", "cosanet_ipversion"}
+	labels := []string{
+		"cosanet_node",
+		"cosanet_pod",
+		"cosanet_namespace",
+		"cosanet_netnsname",
+		"cosanet_state",
+		"cosanet_ipversion",
+	}
 	for state, value := range statsv4 {
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
@@ -272,6 +294,7 @@ func (c *CosanetCollector) collectAndEmitSockStats(info PodInfo, socktype string
 			c.nodename,
 			info.Name,
 			info.Namespace,
+			info.netNSName,
 			state,
 			"ipv4",
 		)
@@ -290,12 +313,13 @@ func (c *CosanetCollector) collectAndEmitSockStats(info PodInfo, socktype string
 			c.nodename,
 			info.Name,
 			info.Namespace,
+			info.netNSName,
 			state,
 			"ipv6",
 		)
 	}
 
-	return nil
+	return statsv4, statsv6, nil
 }
 
 type podSandboxStatusInfo struct {
@@ -308,6 +332,15 @@ type podSandboxStatusInfo struct {
 			}
 		} `json:"linux"`
 	} `json:"runtimeSpec"`
+}
+
+func (p *podSandboxStatusInfo) getNetworkNamespaceName() string {
+	path := p.getNetworkNamespacePath()
+	idx := strings.LastIndex(path, "/")
+	if idx == -1 {
+		return path
+	}
+	return path[idx+1:]
 }
 
 func (p *podSandboxStatusInfo) getNetworkNamespacePath() string {
@@ -373,6 +406,7 @@ func listSandboxes() ([]PodInfo, error) {
 		podInfos = append(podInfos, PodInfo{
 			PID:       podInfo.PID,
 			netNSPath: podInfo.getNetworkNamespacePath(),
+			netNSName: podInfo.getNetworkNamespaceName(),
 			Name:      statusResp.Status.Metadata.Name,
 			Namespace: statusResp.Status.Metadata.Namespace,
 		})
