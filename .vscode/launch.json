@@ -12,6 +12,9 @@
             "program": ".",
             "console": "integratedTerminal",
             "asRoot": true,
+            // "args": [
+            //     "--collector.sockproto.enabled=false",
+            // ]
             // "env": {
             //     "CRI_SOCKET": "/tmp"
             // }

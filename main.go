@@ -15,10 +15,11 @@ import (
 )
 
 type CliOpts struct {
-	LogFormat     string
-	ListenAddr    string
-	CacheDuration time.Duration
-	Verbosity     string
+	LogFormat        string
+	ListenAddr       string
+	CacheDuration    time.Duration
+	Verbosity        string
+	CollectorOptions collector.CosanetCollectorOptions
 }
 
 var (
@@ -34,10 +35,101 @@ func main() {
 	var logger *slog.Logger
 
 	opts := &CliOpts{}
-	flag.StringVar(&opts.LogFormat, "logformat", "json", "Log output format: json or text")
-	flag.StringVar(&opts.ListenAddr, "listen", ":9156", "Address and port to listen on (e.g. :8080 or 0.0.0.0:9988)")
-	flag.DurationVar(&opts.CacheDuration, "cache-duration", 500*time.Millisecond, "Cache duration for metrics collection (e.g. 500ms, 2s, 1m)")
-	flag.StringVar(&opts.Verbosity, "verbosity", "info", "Log verbosity: debug, info, warn, error")
+
+	// Generic settings
+	flag.StringVar(
+		&opts.LogFormat,
+		"logformat",
+		"json",
+		"Log output format: json or text",
+	)
+	flag.StringVar(
+		&opts.ListenAddr,
+		"listen",
+		":9156",
+		"Address and port to listen on (e.g. :8080 or 0.0.0.0:9988)",
+	)
+	flag.DurationVar(
+		&opts.CacheDuration,
+		"cache-duration",
+		500*time.Millisecond,
+		"Cache duration for metrics collection (e.g. 500ms, 2s, 1m)",
+	)
+	flag.StringVar(
+		&opts.Verbosity,
+		"verbosity",
+		"info",
+		"Log verbosity: debug, info, warn, error",
+	)
+
+	// Collector settings
+
+	// Pod filtering
+	flag.StringVar(
+		&opts.CollectorOptions.PodFilter,
+		"collector.pod-filter",
+		"^.+$",
+		"filter namespace/pod based on regex (eg: ^default/.*$)",
+	)
+
+	// Host related
+	flag.BoolVar(
+		&opts.CollectorOptions.CollectHost.Enabled,
+		"collector.host-metrics.enabled",
+		true,
+		"collect host metrics",
+	)
+
+	// Conntrack related
+	flag.BoolVar(
+		&opts.CollectorOptions.Conntrack.Enabled,
+		"collector.connstrack.enabled",
+		true,
+		"enable conntack stats (curr and max) collection",
+	)
+
+	// SNMP related
+	flag.BoolVar(
+		&opts.CollectorOptions.Snmp.Enabled,
+		"collector.snmp.enabled",
+		true,
+		"enable /proc/net/snmp and snmp6 collection",
+	)
+	flag.StringVar(
+		&opts.CollectorOptions.Snmp.MetricInclude,
+		"collector.snmp.metric-include",
+		"^(Tcp_((Act|Pass)iveOpens|CurrEstab)|Ip6_(In|Out)Octets)$",
+		"filter snmp metrics using regex tested against proto_metric",
+	)
+
+	// Netstat related
+	flag.BoolVar(
+		&opts.CollectorOptions.Netstat.Enabled,
+		"collector.netstat.enabled",
+		true,
+		"enable /proc/net/netstat collection",
+	)
+	flag.StringVar(
+		&opts.CollectorOptions.Netstat.MetricInclude,
+		"collector.netstat.metric-include",
+		"^IpExt_(In|Out)Octets$",
+		"filter netstat metrics using regex tested against proto_metric",
+	)
+
+	// Socket Protocol related
+	flag.BoolVar(
+		&opts.CollectorOptions.SockProto.Enabled,
+		"collector.sockproto.enabled",
+		false,
+		"enable per socket protocol states stats (/proc/net/{tcp,udp,icmp,udplite,raw}{,6}) (default false)",
+	)
+	flag.StringVar(
+		&opts.CollectorOptions.SockProto.Protos,
+		"collector.sockproto.protos",
+		"tcp,udp",
+		"socket protocol list to collect (comma separated, available: tcp, udp, icmp, udplite and raw)",
+	)
+
 	flag.Parse()
 
 	var logLevel slog.Level
@@ -53,7 +145,7 @@ func main() {
 	}
 
 	if opts.LogFormat == "text" {
-		handler := &PrettyHandler{out: os.Stdout}
+		handler := &PrettyHandler{Out: os.Stdout, Level: logLevel}
 		logger = slog.New(handler)
 	} else {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
@@ -84,7 +176,7 @@ func main() {
 	collector := collector.NewCosanetCollector(
 		nodename,
 		collectRequestChan,
-		collector.CosanetCollectorOptions{},
+		opts.CollectorOptions,
 	)
 
 	prometheus.MustRegister(collector)
