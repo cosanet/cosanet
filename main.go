@@ -145,7 +145,7 @@ func main() {
 	}
 
 	if opts.LogFormat == "text" {
-		handler := &PrettyHandler{out: os.Stdout}
+		handler := &PrettyHandler{Out: os.Stdout, Level: logLevel}
 		logger = slog.New(handler)
 	} else {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))

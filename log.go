@@ -12,12 +12,13 @@ import (
 
 // PrettyHandler is a custom slog.Handler for colorful log output.
 type PrettyHandler struct {
-	out *os.File
+	Out   *os.File
+	Level slog.Level
 }
 
 // Enabled enables all log levels.
-func (h *PrettyHandler) Enabled(_ context.Context, _ slog.Level) bool {
-	return true
+func (h *PrettyHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= h.Level
 }
 
 // Handle prints the record with colorized level and key-value attributes.
@@ -55,7 +56,7 @@ func (h *PrettyHandler) Handle(_ context.Context, r slog.Record) error {
 
 	// Join and print all
 	out := fmt.Sprintf("[%s] %s %-5s %s %s", ts, coloredLevel, r.Level, msg, strings.Join(attrs, " "))
-	fmt.Fprintln(h.out, out)
+	fmt.Fprintln(h.Out, out)
 	return nil
 }
 
