@@ -9,10 +9,16 @@ import (
 	"time"
 
 	"github.com/cosanet/cosanet/internal/collector"
+	"github.com/cosanet/cosanet/internal/controller_resolver"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// Very long story short: we can't collect other netns stats in non locked thread
+func init() {
+	runtime.LockOSThread()
+}
 
 type CliOpts struct {
 	LogFormat        string
@@ -30,7 +36,6 @@ var (
 	ProjectURL     = "https://github.com/cosanet/cosanet"
 )
 
-// Very long story short: we can't collect other netns stats in goroutine
 func main() {
 	var logger *slog.Logger
 
@@ -98,7 +103,7 @@ func main() {
 	flag.StringVar(
 		&opts.CollectorOptions.Snmp.MetricInclude,
 		"collector.snmp.metric-include",
-		"^(Tcp_((Act|Pass)iveOpens|CurrEstab)|Ip6_(In|Out)Octets)$",
+		"^(Tcp_((Act|Pass)iveOpens|CurrEstab)|Ip6_(In|Out)Octets|Udp6?_(In|Out)Datagrams)$",
 		"filter snmp metrics using regex tested against proto_metric",
 	)
 
@@ -171,33 +176,28 @@ func main() {
 	}
 	slog.Info("Nodename", slog.String("hostname", nodename))
 
+	controller_resolver := controller_resolver.NewResolver(
+		&controller_resolver.ResolverOptions{
+			Nodename: nodename,
+		},
+	)
+
 	// Part of the kludge to perform the collection on main thread (see bellow)
 	collectRequestChan := make(chan collector.CollectRequest)
 	collector := collector.NewCosanetCollector(
 		nodename,
 		collectRequestChan,
 		opts.CollectorOptions,
+		&controller_resolver,
 	)
 
 	prometheus.MustRegister(collector)
 
 	http.Handle("/metrics", promhttp.Handler())
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<html>
-<head><title>Cosanet Exporter ` + Version + `</title></head>
-<body>
-	<h1>Cosanet Exporter ` + Version + `</h1>
-	<p>Version: ` + Version + ` (` + CommitHash + `)</p>
-	<p>Builder: ` + Builder + `</p>
-	<p>Built on: ` + BuildTimestamp + `</p>
-	<p>Project URL: ` + ProjectURL + `</p>
-	<p><a href="/metrics">Metrics</a></p>
-</body>
-</html>` + "\n"))
-	})
-	slog.Info("Exporter running", slog.String("address", opts.ListenAddr+"/metrics"))
+
+	http.HandleFunc("/", indexHandler)
 	go func() {
+		slog.Info("Exporter running", slog.String("address", opts.ListenAddr+"/metrics"))
 		err := http.ListenAndServe(opts.ListenAddr, nil)
 		if err != nil {
 			slog.Error("Exporter failed", slog.Any("err", err))
@@ -205,17 +205,32 @@ func main() {
 		}
 	}()
 
-	// Lock the OS Thread so we don't accidentally switch namespaces
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
 	var cacheTimestamp time.Time
 	var metricsCache []prometheus.Metric
 
 	for collectRequest := range collectRequestChan {
 		if time.Since(cacheTimestamp) > opts.CacheDuration || len(metricsCache) == 0 {
 			metricsChan := make(chan prometheus.Metric)
-			metricTemp := []prometheus.Metric{}
+			metricTemp := []prometheus.Metric{
+				prometheus.MustNewConstMetric(
+					prometheus.NewDesc(
+						"cosanet_build_info",
+						"A metric with a constant '1' value labeled by version, revision, build_date, builder and project_url from which cosanet was built.",
+						[]string{"version", "revision", "build_date", "builder", "project_url", "goarch", "goos", "goversion"},
+						nil,
+					),
+					prometheus.UntypedValue,
+					1,
+					Version,
+					CommitHash,
+					BuildTimestamp,
+					Builder,
+					ProjectURL,
+					runtime.GOARCH,
+					runtime.GOOS,
+					runtime.Version(),
+				),
+			}
 			go func() {
 				for m := range metricsChan {
 					metricTemp = append(metricTemp, m)
@@ -232,4 +247,19 @@ func main() {
 		collectRequest.Done <- true
 	}
 
+}
+
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(`<html>
+<head><title>Cosanet Exporter ` + Version + `</title></head>
+<body>
+	<h1>Cosanet Exporter ` + Version + `</h1>
+	<p>Version: ` + Version + ` (` + CommitHash + `)</p>
+	<p>Builder: ` + Builder + `</p>
+	<p>Built on: ` + BuildTimestamp + `</p>
+	<p>Project URL: ` + ProjectURL + `</p>
+	<p><a href="/metrics">Metrics</a></p>
+</body>
+</html>` + "\n"))
 }
