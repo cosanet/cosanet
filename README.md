@@ -69,6 +69,15 @@ If cosanet's service account has get, list, and watch permission on replicasets,
 
 ## Usage
 
+## Installation
+
+- Using helm
+
+```bash
+helm repo add cosanet https://cosanet.github.io/charts
+helm install cosanet cosanet
+```
+
 ## Configuration
 
 Cosanet will auto-detect the container runtime socket. You can override the socket path by setting the `CRI_SOCKET` environment variable:
