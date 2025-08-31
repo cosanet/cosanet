@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/cosanet/cosanet/internal/controller_resolver"
 	"github.com/cosanet/cosanet/internal/netstat"
 	"github.com/cosanet/cosanet/internal/procnet_2l_parser"
 	"github.com/cosanet/cosanet/internal/procnet_v6_parser"
@@ -25,6 +25,7 @@ import (
 
 type PodInfo struct {
 	PID       int
+	UID       string
 	Name      string
 	Namespace string
 	netNSPath string
@@ -38,6 +39,7 @@ type CosanetCollector struct {
 	podFilter           regexp.Regexp
 	snmpMetricFilter    regexp.Regexp
 	netstatMetricFilter regexp.Regexp
+	controller_resolver controller_resolver.PodControllerResolver
 }
 
 // Describe implements prometheus.Collector.
@@ -66,7 +68,12 @@ type CosanetCollectorOptions struct {
 	}
 }
 
-func NewCosanetCollector(nodename string, ch chan CollectRequest, options CosanetCollectorOptions) *CosanetCollector {
+func NewCosanetCollector(
+	nodename string,
+	ch chan CollectRequest,
+	options CosanetCollectorOptions,
+	controller_resolver *controller_resolver.PodControllerResolver,
+) *CosanetCollector {
 	return &CosanetCollector{
 		nodename:            nodename,
 		chanToFeed:          ch,
@@ -74,6 +81,7 @@ func NewCosanetCollector(nodename string, ch chan CollectRequest, options Cosane
 		podFilter:           *regexp.MustCompile(options.PodFilter),
 		snmpMetricFilter:    *regexp.MustCompile(options.Snmp.MetricInclude),
 		netstatMetricFilter: *regexp.MustCompile(options.Netstat.MetricInclude),
+		controller_resolver: *controller_resolver,
 	}
 }
 
@@ -95,9 +103,6 @@ func (c *CosanetCollector) Collect(ch chan<- prometheus.Metric) {
 
 // The kludge to perform collect from main thread
 func (c *CosanetCollector) CollectFromMainThread(ch chan<- prometheus.Metric) {
-	// Lock the OS Thread so we don't accidentally switch namespaces
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 
 	// Save the current network namespace
 	origns, _ := netns.Get()
@@ -247,11 +252,23 @@ func (c *CosanetCollector) collectStatsInNETNS(info PodInfo, ch chan<- prometheu
 }
 
 func (c *CosanetCollector) collectAndEmitConntrackStats(info PodInfo, ch chan<- prometheus.Metric) error {
-	dynamic_label_def := []string{
+	dynamic_labels := []string{
 		"cosanet_node",
 		"cosanet_pod",
 		"cosanet_namespace",
 		"cosanet_netnsname",
+	}
+	dynamic_values := []string{
+		c.nodename,
+		info.Name,
+		info.Namespace,
+		info.netNSName,
+	}
+
+	ctrlref, found := c.controller_resolver.GetControllerForUid(info.UID)
+	if found {
+		dynamic_labels = append(dynamic_labels, "cosanet_pod_controller_kind", "cosanet_pod_controller_name")
+		dynamic_values = append(dynamic_values, ctrlref.Kind, ctrlref.Name)
 	}
 
 	cntck, err := conntrack.Dial(nil)
@@ -268,40 +285,47 @@ func (c *CosanetCollector) collectAndEmitConntrackStats(info PodInfo, ch chan<- 
 		prometheus.NewDesc(
 			"cosanet_conntrack_curr",
 			"Number of entries in the conntrack table",
-			dynamic_label_def,
+			dynamic_labels,
 			nil,
 		),
 		prometheus.UntypedValue,
 		float64(statsg.Entries),
-		c.nodename,
-		info.Name,
-		info.Namespace,
-		info.netNSName,
+		dynamic_values...,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			"cosanet_conntrack_max",
 			"Maximum entries in the conntrack table",
-			dynamic_label_def,
+			dynamic_labels,
 			nil,
 		),
 		prometheus.UntypedValue,
 		float64(statsg.MaxEntries),
-		c.nodename,
-		info.Name,
-		info.Namespace,
-		info.netNSName,
+		dynamic_values...,
 	)
 	return nil
 }
 
 func (c *CosanetCollector) publishProcNet(source string, stats map[string]map[string]int, info PodInfo, ch chan<- prometheus.Metric, filter regexp.Regexp) {
-	labels := []string{
+	dynamic_labels := []string{
 		"cosanet_node",
 		"cosanet_pod",
 		"cosanet_namespace",
 		"cosanet_netnsname",
 	}
+	dynamic_values := []string{
+		c.nodename,
+		info.Name,
+		info.Namespace,
+		info.netNSName,
+	}
+
+	ctrlref, found := c.controller_resolver.GetControllerForUid(info.UID)
+	if found {
+		dynamic_labels = append(dynamic_labels, "cosanet_pod_controller_kind", "cosanet_pod_controller_name")
+		dynamic_values = append(dynamic_values, ctrlref.Kind, ctrlref.Name)
+	}
+
 	for proto, metrics := range stats {
 		for metric, value := range metrics {
 			motif := fmt.Appendf(nil, "%s_%s", proto, metric)
@@ -320,15 +344,12 @@ func (c *CosanetCollector) publishProcNet(source string, stats map[string]map[st
 				prometheus.NewDesc(
 					fmt.Sprintf("cosanet_proc_net_%s_%s_%s", source, proto, metric),
 					fmt.Sprintf("/proc/net/%s %s %s entry", source, proto, metric),
-					labels,
+					dynamic_labels,
 					nil,
 				),
 				prometheus.UntypedValue,
 				float64(value),
-				c.nodename,
-				info.Name,
-				info.Namespace,
-				info.netNSName,
+				dynamic_values...,
 			)
 		}
 	}
@@ -399,30 +420,38 @@ func (c *CosanetCollector) collectAndEmitSockStats(info PodInfo, socktype string
 		return nil, nil, err
 	}
 
-	labels := []string{
+	dynamic_labels := []string{
+		"cosanet_state",
+		"cosanet_ipversion",
 		"cosanet_node",
 		"cosanet_pod",
 		"cosanet_namespace",
 		"cosanet_netnsname",
-		"cosanet_state",
-		"cosanet_ipversion",
 	}
+	dynamic_values := []string{
+		c.nodename,
+		info.Name,
+		info.Namespace,
+		info.netNSName,
+	}
+
+	ctrlref, found := c.controller_resolver.GetControllerForUid(info.UID)
+	if found {
+		dynamic_labels = append(dynamic_labels, "cosanet_pod_controller_kind", "cosanet_pod_controller_name")
+		dynamic_values = append(dynamic_values, ctrlref.Kind, ctrlref.Name)
+	}
+
 	for state, value := range statsv4 {
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
 				fmt.Sprintf("cosanet_proc_net_%s", socktype),
 				fmt.Sprintf("Socket statistics for %s", socktype),
-				labels,
+				dynamic_labels,
 				nil,
 			),
 			prometheus.UntypedValue,
 			float64(value),
-			c.nodename,
-			info.Name,
-			info.Namespace,
-			info.netNSName,
-			state,
-			"ipv4",
+			append([]string{state, "ipv4"}, dynamic_values...)...,
 		)
 	}
 
@@ -431,20 +460,14 @@ func (c *CosanetCollector) collectAndEmitSockStats(info PodInfo, socktype string
 			prometheus.NewDesc(
 				fmt.Sprintf("cosanet_proc_net_%s", socktype),
 				fmt.Sprintf("Socket statistics for %s", socktype),
-				labels,
+				dynamic_labels,
 				nil,
 			),
 			prometheus.UntypedValue,
 			float64(value),
-			c.nodename,
-			info.Name,
-			info.Namespace,
-			info.netNSName,
-			state,
-			"ipv6",
+			append([]string{state, "ipv6"}, dynamic_values...)...,
 		)
 	}
-
 	return statsv4, statsv6, nil
 }
 
@@ -533,6 +556,7 @@ func listSandboxes() ([]PodInfo, error) {
 			PID:       podInfo.PID,
 			netNSPath: podInfo.getNetworkNamespacePath(),
 			netNSName: podInfo.getNetworkNamespaceName(),
+			UID:       statusResp.Status.Metadata.Uid,
 			Name:      statusResp.Status.Metadata.Name,
 			Namespace: statusResp.Status.Metadata.Namespace,
 		})

@@ -62,6 +62,11 @@ Per proto stats also have the following labels:
 - `cosanet_ipversion`: `ipv4` or `ipv6`
 - `cosanet_state`: `LISTEN`, `CLOSE`, `TIME_WAIT`, `ESTABLISHED` ...
 
+If cosanet's service account has get, list, and watch permission on replicasets, jobs and pods across all namespaces then metrics label will also have:
+
+- `cosanet_pod_controller_kind`
+- `cosanet_pod_controller_name`
+
 ## Usage
 
 ## Configuration
@@ -76,23 +81,23 @@ export CRI_SOCKET=/custom/path/to/containerd.sock
 
 Cosanet Exporter supports the following command-line arguments:
 
-| Argument                            | Default                                                                                    | Description                                                                                                     |
-| ----------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `-logformat`                        | `json`                                                                                     | Log output format: `json` or `text`                                                                             |
-| `-listen`                           | `:9156`                                                                                    | Address and port to listen on (e.g. `:8080` or `0.0.0.0:9988`)                                                  |
-| `-cache-duration`                   | `500ms`                                                                                    | Cache duration for metrics collection (e.g. `500ms`, `2s`, `1m`)                                                |
-| `-verbosity`                        | `info`                                                                                     | Log verbosity: `debug`, `info`, `warn`, `error`                                                                 |
-| `-collector.host-metrics.enabled`   | `true`                                                                                     | Collect host metrics                                                                                            |
-| `-collector.connstrack.enabled`     | `true`                                                                                     | Enable conntrack stats (curr and max) collection                                                                |
-| `-collector.snmp.enabled`           | `true`                                                                                     | Enable `/proc/net/snmp` and `snmp6` collection                                                                  |
-| `-collector.snmp.metric-include`    | <code>^(Tcp_((Act&#124;Pass)iveOpens&#124;CurrEstab)&#124;Ip6_(In&#124;Out)Octets)$</code> | Filter SNMP metrics using regex tested against `<proto>_<metric>`                                               |
-| `-collector.netstat.enabled`        | `true`                                                                                     | Enable `/proc/net/netstat` collection                                                                           |
-| `-collector.netstat.metric-include` | <code>^IpExt_(In&#124;Out)Octets$</code>                                                   | Filter netstat metrics using regex tested against `<proto>_<metric>`                                            |
-| `-collector.sockproto.enabled`      | `false`                                                                                    | Enable per socket protocol states stats (`/proc/net/{tcp,udp,icmp,udplite,raw}{,6}`, can be resource consuming) |
-| `-collector.sockproto.protos`       | `tcp,udp`                                                                                  | Socket protocol list to collect, comma separated                                                                |
-| `-collector.pod-filter`             | `^.+$`                                                                                     | Filter namespace/pod based on regex                                                                             |
+| Argument                            | Default                                                                                                                      | Description                                                                                                     |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `-logformat`                        | `json`                                                                                                                       | Log output format: `json` or `text`                                                                             |
+| `-listen`                           | `:9156`                                                                                                                      | Address and port to listen on (e.g. `:8080` or `0.0.0.0:9988`)                                                  |
+| `-cache-duration`                   | `500ms`                                                                                                                      | Cache duration for metrics collection (e.g. `500ms`, `2s`, `1m`)                                                |
+| `-verbosity`                        | `info`                                                                                                                       | Log verbosity: `debug`, `info`, `warn`, `error`                                                                 |
+| `-collector.host-metrics.enabled`   | `true`                                                                                                                       | Collect host metrics                                                                                            |
+| `-collector.connstrack.enabled`     | `true`                                                                                                                       | Enable conntrack stats (curr and max) collection                                                                |
+| `-collector.snmp.enabled`           | `true`                                                                                                                       | Enable `/proc/net/snmp` and `snmp6` collection                                                                  |
+| `-collector.snmp.metric-include`    | <code>^(Tcp_((Act&#124;Pass)iveOpens&#124;CurrEstab)&#124;Ip6_(In&#124;Out)Octets&#124;Udp6?_(In&#124;Out)Datagrams)$</code> | Filter SNMP metrics using regex tested against `<proto>_<metric>`                                               |
+| `-collector.netstat.enabled`        | `true`                                                                                                                       | Enable `/proc/net/netstat` collection                                                                           |
+| `-collector.netstat.metric-include` | <code>^IpExt_(In&#124;Out)Octets$</code>                                                                                     | Filter netstat metrics using regex tested against `<proto>_<metric>`                                            |
+| `-collector.sockproto.enabled`      | `false`                                                                                                                      | Enable per socket protocol states stats (`/proc/net/{tcp,udp,icmp,udplite,raw}{,6}`, can be resource consuming) |
+| `-collector.sockproto.protos`       | `tcp,udp`                                                                                                                    | Socket protocol list to collect, comma separated                                                                |
+| `-collector.pod-filter`             | `^.+$`                                                                                                                       | Filter namespace/pod based on regex                                                                             |
 
-Due to the large amount of metrics emitted per sandbox (~400+), default settings focus around trafic (In/OutOctets) and incoming (`PassiveOpens`), outgoing (`ActiveOpens`) and established (`CurrEstab`) TCP connection.
+Due to the large amount of metrics emitted per sandbox (~400+), default settings focus around trafic (In/OutOctets), UDP Datagrams (In/Out) and incoming (`PassiveOpens`), outgoing (`ActiveOpens`) and established (`CurrEstab`) TCP connection.
 
 Example usage:
 
