@@ -166,7 +166,7 @@ Below is a list of metrics exposed by Cosanet, grouped by their source:
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26.10+
 - Linux (requires network namespace support)
 - k3s cluster locally
 

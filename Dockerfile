@@ -1,4 +1,4 @@
-FROM golang:1.25 AS builder
+FROM golang:1.27 AS builder
 
 ARG BUILD_TIMESTAMP="1970-01-01T00:00:00+00:00"
 ARG COMMIT_HASH="00000000-dirty"
